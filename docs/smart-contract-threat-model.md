@@ -386,6 +386,14 @@ threshold: 5 minutes) would detect this within one poll cycle.
 **Residual risk owner:** Platform Operator (must track Stellar SDK changelogs and
 Horizon API deprecation notices).
 
+**Upgrade and pause controls (Issue #61):** Explicit, least-privilege upgrade and
+pause controls are now defined in `backend/src/services/contractUpgradeControls.js`:
+- Only OWNER may propose or execute an upgrade; OPERATOR may pause but not unpause.
+- Upgrades require a multi-sig quorum (`UPGRADE_QUORUM = 2`) to prevent single-key unilateral deployment.
+- All upgrade proposals, approvals, and rollbacks are recorded for audit purposes.
+- Recovery procedures for upgrade failures and key loss are documented in
+  `docs/runbooks/contract-upgrade-failure.md`.
+
 ---
 
 ### SC-09 Soroban Contract Authorization Bypass
