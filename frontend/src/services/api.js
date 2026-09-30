@@ -1,10 +1,11 @@
 import axios from "axios";
 import { createRefreshHandler } from "./authRefresh";
+import { getEnvVar } from '../config/envValidation';
 
-const TIMEOUT_MS = parseInt(process.env.NEXT_PUBLIC_REQUEST_TIMEOUT_MS || "15000", 10);
+const TIMEOUT_MS = parseInt(getEnvVar('NEXT_PUBLIC_REQUEST_TIMEOUT_MS', '15000'), 10);
 
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api",
+  baseURL: getEnvVar('NEXT_PUBLIC_API_URL', 'http://localhost:5000/api'),
   timeout: TIMEOUT_MS,
   withCredentials: true,
 });
@@ -88,6 +89,7 @@ export const getStudents = (page = 1, limit = 20, { search, status, className } 
 export const getStudent = (studentId, { signal } = {}) => api.get(`/students/${studentId}`, { signal });
 export const registerStudent = (data) => api.post("/students", data);
 export const updateStudent = (studentId, data) => api.patch(`/students/${studentId}`, data);
+// Payment endpoints — also available as a typed client via ./paymentApiClient
 export const getPaymentSummary = ({ signal } = {}) => api.get("/payments/summary", { signal });
 export const getPaymentInstructions = (studentId, { signal } = {}) => api.get(`/payments/instructions/${studentId}`, { signal });
 export const getStudentPayments = (studentId, { signal } = {}) => api.get(`/payments/${studentId}`, { signal });
