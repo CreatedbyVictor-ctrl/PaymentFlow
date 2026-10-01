@@ -476,6 +476,42 @@ jobs:
           path: test-results/smoke/
           retention-days: 7
 
+  # ── #60: Local contract simulation ──────────────────────────────────────
+  # Runs representative Soroban contract transaction simulations using the
+  # existing Node.js contract services. Catches contract assumption drift
+  # before it reaches staging.  Tool version is pinned via the
+  # CONTRACT_SIMULATION_TOOLCHAIN env var. The script logs the contract
+  # schema version and network configuration so the output is always
+  # reproducible from the CI log.
+  contract-simulation:
+    name: Local contract simulation
+    runs-on: ubuntu-latest
+    env:
+      STELLAR_NETWORK: testnet
+      CONTRACT_SIMULATION_TOOLCHAIN: "1.0.0"
+      # Dummy values required by config/index.js validation at module load time.
+      # No database or real keys are used during simulation.
+      JWT_SECRET: ci-contract-simulation-dummy-secret
+      MONGO_URI: mongodb://localhost:27017/simulation_dummy
+      SCHOOL_WALLET_ADDRESS: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      - uses: actions/cache@v6
+        with:
+          path: |
+            backend/node_modules
+            node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+      - run: npm ci
+      - run: cd backend && npm ci && cd ..
+      - name: Run contract simulations
+        run: node scripts/contract-simulation.js
+
   # ── #1389: Required gate ─────────────────────────────────────────────────
   # A single job that every branch-protection rule needs to require. Add this
   # job name ("CI gate") as the sole required status check in GitHub's branch
@@ -502,5 +538,6 @@ jobs:
       - coverage
       - api-schema-regression
       - cross-browser-smoke
+      - contract-simulation
     steps:
       - run: echo "All required checks passed."
