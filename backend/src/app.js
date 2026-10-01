@@ -404,7 +404,11 @@ async function shutdown(signal) {
   const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS, 10) || 30_000;
 
   const forceExitTimer = setTimeout(() => {
-    logger.error(`Forced exit after ${SHUTDOWN_TIMEOUT_MS}ms shutdown timeout`);
+    logger.error('Forced exit: shutdown deadline exceeded', {
+      reason: 'shutdown_timeout',
+      signal,
+      shutdownTimeoutMs: SHUTDOWN_TIMEOUT_MS,
+    });
     process.exit(1);
   }, SHUTDOWN_TIMEOUT_MS);
   forceExitTimer.unref();
