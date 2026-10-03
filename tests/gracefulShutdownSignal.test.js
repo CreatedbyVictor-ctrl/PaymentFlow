@@ -82,6 +82,16 @@ describe('SIGTERM graceful shutdown', () => {
       stopWorker: jest.fn().mockResolvedValue(undefined),
     }));
 
+    jest.doMock('../backend/src/services/outboxDispatcher', () => ({
+      startOutboxDispatcher: jest.fn(),
+      stopOutboxDispatcher: jest.fn(),
+    }));
+
+    jest.doMock('../backend/src/services/reportQueueService', () => ({
+      startWorker: jest.fn(),
+      stopWorker: jest.fn().mockResolvedValue(undefined),
+    }));
+
     jest.doMock('../backend/src/services/sessionCleanupService', () => ({
       startSessionCleanupScheduler: jest.fn(),
       stopSessionCleanupScheduler: jest.fn(),

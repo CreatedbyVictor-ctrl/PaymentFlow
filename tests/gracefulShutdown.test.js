@@ -91,6 +91,16 @@ jest.mock('../backend/src/services/bullMQRetryService', () => ({
   shutdownQueue: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../backend/src/services/outboxDispatcher', () => ({
+  startOutboxDispatcher: jest.fn(),
+  stopOutboxDispatcher: jest.fn(),
+}));
+
+jest.mock('../backend/src/services/reportQueueService', () => ({
+  startWorker: jest.fn(),
+  stopWorker: jest.fn().mockResolvedValue(undefined),
+}));
+
 jest.mock('../backend/src/services/sseService', () => ({
   close: jest.fn().mockResolvedValue(undefined),
   closeAll: jest.fn().mockResolvedValue(undefined),
@@ -228,15 +238,17 @@ describe('shutdownManager', () => {
     expect(dm.isReady()).toBe(false);
   });
 
-  it('drainWorkers calls drain on both queue modules', async () => {
+  it('drainWorkers calls drain on txQueue; retryQueue drain is deferred to closeQueues', async () => {
     const dm = require('../backend/src/services/shutdownManager');
     const txQueue = require('../backend/src/queue/transactionQueue');
     const retryQueueModule = require('../backend/src/queue/transactionRetryQueue');
-    
+
     const result = await dm.drainWorkers();
-    
+
     expect(txQueue.drainWorker).toHaveBeenCalled();
-    expect(retryQueueModule.drainWorker).toHaveBeenCalled();
+    // transactionRetryQueue.drainWorker is intentionally NOT called —
+    // the retry queue is shut down via bullMQRetryService.shutdownQueue in closeQueues().
+    expect(retryQueueModule.drainWorker).not.toHaveBeenCalled();
     expect(result.txQueue).toBe(true);
     expect(result.retryQueue).toBe(true);
   });
@@ -250,17 +262,23 @@ describe('shutdownManager', () => {
     expect(sseService.closeAll).toHaveBeenCalled();
   });
 
-  it('stopAcceptingNewWork calls stop on polling and retrySelector', async () => {
+  it('stopAcceptingNewWork calls stop on polling, retrySelector, leaderElection, txQueueWorker, outboxDispatcher, and reportQueueWorker', async () => {
     const dm = require('../backend/src/services/shutdownManager');
     const polling = require('../backend/src/services/transactionPollingService');
     const retrySelector = require('../backend/src/services/retryServiceSelector');
     const leaderElection = require('../backend/src/services/leaderElection');
+    const txQueueService = require('../backend/src/services/transactionQueueService');
+    const outboxDispatcher = require('../backend/src/services/outboxDispatcher');
+    const reportQueueService = require('../backend/src/services/reportQueueService');
 
     await dm.stopAcceptingNewWork();
 
     expect(polling.stopPolling).toHaveBeenCalled();
     expect(retrySelector.stop).toHaveBeenCalled();
     expect(leaderElection.stop).toHaveBeenCalled();
+    expect(txQueueService.stopWorker).toHaveBeenCalled();
+    expect(outboxDispatcher.stopOutboxDispatcher).toHaveBeenCalled();
+    expect(reportQueueService.stopWorker).toHaveBeenCalled();
   });
 });
 
@@ -366,33 +384,69 @@ describe('AC2 — in-flight work completes or is recoverable', () => {
 
     const result = await dm.drainWorkers();
 
+    // txQueue has drainWorker and it should be called
     expect(txQueue.drainWorker).toHaveBeenCalledTimes(1);
-    expect(retryQueue.drainWorker).toHaveBeenCalledTimes(1);
-    // Both queues report drained=true in the mock; the manager records this.
+    // transactionRetryQueue.drainWorker is NOT called — retryQueue is closed via
+    // bullMQRetryService.shutdownQueue() in closeQueues(). drainWorkers marks
+    // retryQueue as drained immediately so closeQueues can handle it.
+    expect(retryQueue.drainWorker).not.toHaveBeenCalled();
+    // Both result flags must be true.
     expect(result.txQueue).toBe(true);
     expect(result.retryQueue).toBe(true);
   });
 
-  it('drainWorkers() tolerates a queue that rejects — remaining queues still drain', async () => {
-    // Simulate the tx queue throwing; the retry queue should still be drained.
+  it('drainWorkers() tolerates txQueue rejection — retryQueue is still marked drained', async () => {
+    // Simulate the tx queue worker drain throwing; retryQueue drain is unconditional.
     jest.doMock('../backend/src/queue/transactionQueue', () => ({
       closeQueue: jest.fn().mockResolvedValue(undefined),
       drainWorker: jest.fn().mockRejectedValue(new Error('BullMQ unavailable')),
     }));
-    jest.doMock('../backend/src/queue/transactionRetryQueue', () => ({
-      drainWorker: jest.fn().mockResolvedValue({ drained: true, activeJobs: 0, requeuedJobs: 0 }),
-    }));
 
     const dm = require('../backend/src/services/shutdownManager');
-    const retryQueue = require('../backend/src/queue/transactionRetryQueue');
 
     // Should not throw
     const result = await dm.drainWorkers();
 
-    expect(retryQueue.drainWorker).toHaveBeenCalledTimes(1);
-    // txQueue failed so its flag is false; retryQueue succeeded.
+    // txQueue failed so its flag is false; retryQueue is always true.
     expect(result.txQueue).toBe(false);
     expect(result.retryQueue).toBe(true);
+  });
+
+  it('stopAcceptingNewWork() stops txQueueWorker, outboxDispatcher, and reportQueueWorker', async () => {
+    const dm = require('../backend/src/services/shutdownManager');
+    const txQueueService = require('../backend/src/services/transactionQueueService');
+    const outboxDispatcher = require('../backend/src/services/outboxDispatcher');
+    const reportQueueService = require('../backend/src/services/reportQueueService');
+
+    await dm.stopAcceptingNewWork();
+
+    expect(txQueueService.stopWorker).toHaveBeenCalled();
+    expect(outboxDispatcher.stopOutboxDispatcher).toHaveBeenCalled();
+    expect(reportQueueService.stopWorker).toHaveBeenCalled();
+  });
+
+  it('stopAcceptingNewWork() tolerates a stop failure — remaining stops still run', async () => {
+    jest.doMock('../backend/src/services/transactionQueueService', () => ({
+      startWorker: jest.fn(),
+      stopWorker: jest.fn().mockRejectedValue(new Error('worker close error')),
+    }));
+    jest.doMock('../backend/src/services/outboxDispatcher', () => ({
+      startOutboxDispatcher: jest.fn(),
+      stopOutboxDispatcher: jest.fn(),
+    }));
+    jest.doMock('../backend/src/services/reportQueueService', () => ({
+      startWorker: jest.fn(),
+      stopWorker: jest.fn().mockResolvedValue(undefined),
+    }));
+
+    const dm = require('../backend/src/services/shutdownManager');
+    const outboxDispatcher = require('../backend/src/services/outboxDispatcher');
+    const reportQueueService = require('../backend/src/services/reportQueueService');
+
+    // Should not throw even if txQueueWorker stop throws
+    await expect(dm.stopAcceptingNewWork()).resolves.not.toThrow();
+    expect(outboxDispatcher.stopOutboxDispatcher).toHaveBeenCalled();
+    expect(reportQueueService.stopWorker).toHaveBeenCalled();
   });
 });
 

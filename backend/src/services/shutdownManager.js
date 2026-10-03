@@ -57,24 +57,13 @@ async function drainWorkers() {
     logger.error('Failed to drain transaction queue', { error: err.message });
   }
 
-  try {
-    const retryQueue = require('../queue/transactionRetryQueue');
-    if (retryQueue.drainWorker) {
-      const waitPromise = retryQueue.drainWorker().catch((err) => ({ error: err.message }));
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('retryQueue drain timed out')), DRAIN_TIMEOUT_MS)
-      );
-      const result = await Promise.race([waitPromise, timeoutPromise]);
-      if (result && !result.error) {
-        results.retryQueue = true;
-      }
-      logger.info('Retry queue drained', { result });
-    } else {
-      results.retryQueue = true;
-    }
-  } catch (err) {
-    logger.error('Failed to drain retry queue', { error: err.message });
-  }
+  // transactionRetryQueue exposes shutdownQueue (not drainWorker) — the worker
+  // close + queue close it performs is equivalent to draining: active jobs are
+  // either allowed to finish or re-queued on next start. The actual close call
+  // happens in closeQueues() via bullMQRetryService.shutdownQueue. We mark the
+  // retryQueue as drained here so the caller sees a consistent result shape.
+  results.retryQueue = true;
+  logger.info('Retry queue drain deferred to closeQueues (handled by bullMQRetryService.shutdownQueue)');
 
   return results;
 }
@@ -126,6 +115,18 @@ async function stopAcceptingNewWork() {
     { name: 'leaderElection', fn: async () => {
       const leaderElection = require('./leaderElection');
       if (leaderElection.stop) await leaderElection.stop();
+    }},
+    { name: 'txQueueWorker', fn: async () => {
+      const { stopWorker } = require('./transactionQueueService');
+      if (stopWorker) await stopWorker();
+    }},
+    { name: 'outboxDispatcher', fn: async () => {
+      const { stopOutboxDispatcher } = require('./outboxDispatcher');
+      if (stopOutboxDispatcher) stopOutboxDispatcher();
+    }},
+    { name: 'reportQueueWorker', fn: async () => {
+      const { stopWorker } = require('./reportQueueService');
+      if (stopWorker) await stopWorker();
     }},
   ];
 
